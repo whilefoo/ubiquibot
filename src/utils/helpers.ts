@@ -78,9 +78,9 @@ export const getAutoPayMode = ({ parsedRepo, parsedOrg, parsedDefault }: Configs
 };
 
 export const getAnalyticsMode = ({ parsedRepo, parsedOrg, parsedDefault }: Configs): boolean => {
-  if (parsedRepo && parsedRepo["disable-analytics"] && typeof parsedRepo["disable-analytics"] === "boolean") {
+  if (parsedRepo && parsedRepo["disable-analytics"] !== undefined && typeof parsedRepo["disable-analytics"] === "boolean") {
     return parsedRepo["disable-analytics"];
-  } else if (parsedOrg && parsedOrg["disable-analytics"] && typeof parsedOrg["disable-analytics"] === "boolean") {
+  } else if (parsedOrg && parsedOrg["disable-analytics"] !== undefined && typeof parsedOrg["disable-analytics"] === "boolean") {
     return parsedOrg["disable-analytics"];
   } else {
     return parsedDefault["disable-analytics"] as boolean;
