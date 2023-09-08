@@ -1,21 +1,36 @@
 import { Static, Type } from "@sinclair/typebox";
+import { Level } from "../adapters/supabase";
 
 const LabelItemSchema = Type.Object({
   name: Type.String(),
-  weight: Type.Number(),
-  value: Type.Optional(Type.Number()),
 });
 export type LabelItem = Static<typeof LabelItemSchema>;
 
-const CommentElementPricingSchema = Type.Record(Type.String(), Type.Number());
-export type CommentElementPricing = Static<typeof CommentElementPricingSchema>;
+const CommentIncentivesSchema = Type.Object({
+  elements: Type.Record(Type.String(), Type.Number()),
+  totals: Type.Object({
+    word: Type.Number(),
+  }),
+});
+export type CommentIncentives = Static<typeof CommentIncentivesSchema>;
+
+const IncentivesSchema = Type.Object({
+  comment: CommentIncentivesSchema,
+});
+export type Incentives = Static<typeof IncentivesSchema>;
+
+const CommandItemSchema = Type.Object({
+  name: Type.String(),
+  enabled: Type.Boolean(),
+});
+export type CommandItem = Static<typeof CommandItemSchema>;
 
 export const PriceConfigSchema = Type.Object({
   baseMultiplier: Type.Number(),
   issueCreatorMultiplier: Type.Number(),
   timeLabels: Type.Array(LabelItemSchema),
   priorityLabels: Type.Array(LabelItemSchema),
-  commentElementPricing: CommentElementPricingSchema,
+  incentives: IncentivesSchema,
   defaultLabels: Type.Array(Type.String()),
 });
 export type PriceConfig = Static<typeof PriceConfigSchema>;
@@ -41,12 +56,15 @@ export const PayoutConfigSchema = Type.Object({
 export const UnassignConfigSchema = Type.Object({
   followUpTime: Type.Number(),
   disqualifyTime: Type.Number(),
+  timeRangeForMaxIssue: Type.Number(),
+  timeRangeForMaxIssueEnabled: Type.Boolean(),
 });
 
 export const ModeSchema = Type.Object({
-  autoPayMode: Type.Boolean(),
+  paymentPermitMaxPrice: Type.Number(),
   disableAnalytics: Type.Boolean(),
   incentiveMode: Type.Boolean(),
+  assistivePricing: Type.Boolean(),
 });
 
 export const AssignSchema = Type.Object({
@@ -54,8 +72,9 @@ export const AssignSchema = Type.Object({
 });
 
 export const LogConfigSchema = Type.Object({
-  level: Type.String(),
-  ingestionKey: Type.String(),
+  logEnvironment: Type.String(),
+  level: Type.Enum(Level),
+  retryLimit: Type.Number(),
 });
 
 export const SodiumSchema = Type.Object({
@@ -67,6 +86,9 @@ export const CommentsSchema = Type.Object({
   promotionComment: Type.String(),
 });
 
+export const CommandConfigSchema = Type.Array(CommandItemSchema);
+
+export type CommandConfig = Static<typeof CommandConfigSchema>;
 export const WalletSchema = Type.Object({
   registerWalletWithVerification: Type.Boolean(),
 });
@@ -82,6 +104,7 @@ export const BotConfigSchema = Type.Object({
   assign: AssignSchema,
   sodium: SodiumSchema,
   comments: CommentsSchema,
+  command: CommandConfigSchema,
   wallet: WalletSchema,
 });
 

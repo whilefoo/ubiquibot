@@ -1,11 +1,19 @@
 import ms from "ms";
 
 import { BotConfig, BotConfigSchema } from "../types";
-import { DEFAULT_BOT_DELAY, DEFAULT_DISQUALIFY_TIME, DEFAULT_FOLLOWUP_TIME, DEFAULT_PERMIT_BASE_URL } from "../configs";
+import {
+  DEFAULT_BOT_DELAY,
+  DEFAULT_DISQUALIFY_TIME,
+  DEFAULT_FOLLOWUP_TIME,
+  DEFAULT_PERMIT_BASE_URL,
+  DEFAULT_TIME_RANGE_FOR_MAX_ISSUE,
+  DEFAULT_TIME_RANGE_FOR_MAX_ISSUE_ENABLED,
+} from "../configs";
 import { getPayoutConfigByNetworkId } from "../helpers";
 import { ajv } from "../utils";
 import { Context } from "probot";
 import { getScalarKey, getWideConfig } from "../utils/private";
+import { Level } from "../adapters/supabase";
 
 export const loadConfig = async (context: Context): Promise<BotConfig> => {
   const {
@@ -13,8 +21,8 @@ export const loadConfig = async (context: Context): Promise<BotConfig> => {
     timeLabels,
     privateKey,
     priorityLabels,
-    commentElementPricing,
-    autoPayMode,
+    incentives,
+    paymentPermitMaxPrice,
     disableAnalytics,
     bountyHunterMax,
     incentiveMode,
@@ -22,6 +30,8 @@ export const loadConfig = async (context: Context): Promise<BotConfig> => {
     issueCreatorMultiplier,
     defaultLabels,
     promotionComment,
+    commandSettings,
+    assistivePricing,
     registerWalletWithVerification,
   } = await getWideConfig(context);
 
@@ -30,15 +40,16 @@ export const loadConfig = async (context: Context): Promise<BotConfig> => {
 
   const botConfig: BotConfig = {
     log: {
-      level: process.env.LOG_LEVEL || "debug",
-      ingestionKey: process.env.LOGDNA_INGESTION_KEY ?? "",
+      logEnvironment: process.env.LOG_ENVIRONMENT || "production",
+      level: (process.env.LOG_LEVEL as Level) || Level.DEBUG,
+      retryLimit: Number(process.env.LOG_RETRY) || 0,
     },
     price: {
       baseMultiplier,
       issueCreatorMultiplier,
       timeLabels,
       priorityLabels,
-      commentElementPricing,
+      incentives,
       defaultLabels,
     },
     comments: {
@@ -52,6 +63,12 @@ export const loadConfig = async (context: Context): Promise<BotConfig> => {
       permitBaseUrl: process.env.PERMIT_BASE_URL || DEFAULT_PERMIT_BASE_URL,
     },
     unassign: {
+      timeRangeForMaxIssue: process.env.DEFAULT_TIME_RANGE_FOR_MAX_ISSUE
+        ? Number(process.env.DEFAULT_TIME_RANGE_FOR_MAX_ISSUE)
+        : DEFAULT_TIME_RANGE_FOR_MAX_ISSUE,
+      timeRangeForMaxIssueEnabled: process.env.DEFAULT_TIME_RANGE_FOR_MAX_ISSUE_ENABLED
+        ? process.env.DEFAULT_TIME_RANGE_FOR_MAX_ISSUE_ENABLED == "true"
+        : DEFAULT_TIME_RANGE_FOR_MAX_ISSUE_ENABLED,
       followUpTime: ms(process.env.FOLLOW_UP_TIME || DEFAULT_FOLLOWUP_TIME),
       disqualifyTime: ms(process.env.DISQUALIFY_TIME || DEFAULT_DISQUALIFY_TIME),
     },
@@ -64,10 +81,12 @@ export const loadConfig = async (context: Context): Promise<BotConfig> => {
       delay: process.env.TELEGRAM_BOT_DELAY ? Number(process.env.TELEGRAM_BOT_DELAY) : DEFAULT_BOT_DELAY,
     },
     mode: {
-      autoPayMode: autoPayMode,
+      paymentPermitMaxPrice: paymentPermitMaxPrice,
       disableAnalytics: disableAnalytics,
       incentiveMode: incentiveMode,
+      assistivePricing: assistivePricing,
     },
+    command: commandSettings,
     assign: {
       bountyHunterMax: bountyHunterMax,
     },
@@ -80,12 +99,8 @@ export const loadConfig = async (context: Context): Promise<BotConfig> => {
     },
   };
 
-  if (botConfig.log.ingestionKey == "") {
-    throw new Error("LogDNA ingestion key missing");
-  }
-
   if (botConfig.payout.privateKey == "") {
-    botConfig.mode.autoPayMode = false;
+    botConfig.mode.paymentPermitMaxPrice = 0;
   }
 
   const validate = ajv.compile(BotConfigSchema);

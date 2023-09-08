@@ -2,6 +2,7 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { getAdapters, getLogger } from "../../../bindings";
 import { Issue, UserProfile } from "../../../types";
 import { Database } from "../types";
+import { InsertPermit, Permit } from "../../../helpers";
 import { BigNumber, BigNumberish } from "ethers";
 
 /**
@@ -12,7 +13,7 @@ import { BigNumber, BigNumberish } from "ethers";
  * @returns - The supabase client
  */
 export const supabase = (url: string, key: string): SupabaseClient => {
-  return createClient<Database>(url, key);
+  return createClient<Database>(url, key, { auth: { persistSession: false } });
 };
 
 /**
@@ -32,25 +33,45 @@ export const getMaxIssueNumber = async (): Promise<number> => {
 /**
  * @dev Gets the last weekly update timestamp
  */
-export const getLastWeeklyTime = async (): Promise<number> => {
+export const getLastWeeklyTime = async (): Promise<Date | undefined> => {
   const { supabase } = getAdapters();
 
   const { data } = await supabase.from("weekly").select("last_time").limit(1).single();
   if (data) {
-    return Number(data.last_time);
+    return new Date(data.last_time);
   } else {
-    return 0;
+    return undefined;
   }
 };
 
 /**
  * @dev Updates the last weekly update timestamp
  */
-export const updateLastWeeklyTime = async (time: number): Promise<void> => {
+export const updateLastWeeklyTime = async (time: Date): Promise<void> => {
   const logger = getLogger();
   const { supabase } = getAdapters();
-  const { data, error } = await supabase.from("weekly").update({ last_time: time });
-  logger.info(`Updating last time is done, data: ${data}, error: ${error}`);
+
+  const { data, error } = await supabase.from("weekly").select("last_time");
+  if (error) {
+    logger.error(`Checking last time failed, error: ${JSON.stringify(error)}`);
+    throw new Error(`Checking last time failed, error: ${JSON.stringify(error)}`);
+  }
+
+  if (data && data.length > 0) {
+    const { data, error } = await supabase.from("weekly").update({ last_time: time.toUTCString() }).neq("last_time", time.toUTCString());
+    if (error) {
+      logger.error(`Updating last time failed, error: ${JSON.stringify(error)}`);
+      throw new Error(`Updating last time failed, error: ${JSON.stringify(error)}`);
+    }
+    logger.info(`Updating last time is done, data: ${data}`);
+  } else {
+    const { data, error } = await supabase.from("weekly").insert({ last_time: time.toUTCString() });
+    if (error) {
+      logger.error(`Creating last time failed, error: ${JSON.stringify(error)}`);
+      throw new Error(`Creating last time failed, error: ${JSON.stringify(error)}`);
+    }
+    logger.info(`Creating last time is done, data: ${data}`);
+  }
   return;
 };
 
@@ -91,7 +112,7 @@ const getDbDataFromUserProfile = (userProfile: UserProfile, additions?: UserProf
   return {
     user_login: userProfile.login,
     user_type: userProfile.type,
-    user_name: userProfile.name,
+    user_name: userProfile.name ?? userProfile.login,
     company: userProfile.company,
     blog: userProfile.blog,
     user_location: userProfile.location,
@@ -113,18 +134,30 @@ const getDbDataFromUserProfile = (userProfile: UserProfile, additions?: UserProf
 export const upsertIssue = async (issue: Issue, additions: IssueAdditions): Promise<void> => {
   const logger = getLogger();
   const { supabase } = getAdapters();
-  const { data, error } = await supabase.from("issues").select("id").eq("issue_number", issue.number).single();
+  const { data, error } = await supabase.from("issues").select("id").eq("issue_number", issue.number);
+  if (error) {
+    logger.error(`Checking issue failed, error: ${JSON.stringify(error)}`);
+    throw new Error(`Checking issue failed, error: ${JSON.stringify(error)}`);
+  }
 
-  if (data) {
-    const key = data.id as number;
-    await supabase
+  if (data && data.length > 0) {
+    const key = data[0].id as number;
+    const { data: _data, error: _error } = await supabase
       .from("issues")
       .upsert({ id: key, ...getDbDataFromIssue(issue, additions) })
       .select();
-    logger.info(`Upserting an issue done, data: ${data}, error: ${error}`);
-  } else if (error) {
+    if (_error) {
+      logger.error(`Upserting an issue failed, error: ${JSON.stringify(_error)}`);
+      throw new Error(`Upserting an issue failed, error: ${JSON.stringify(_error)}`);
+    }
+    logger.info(`Upserting an issue done, { data: ${_data}, error: ${_error}`);
+  } else {
     const { data: _data, error: _error } = await supabase.from("issues").insert(getDbDataFromIssue(issue, additions));
-    logger.info(`Creating a new issue done, { data: ${_data}, error: ${_error}`);
+    if (_error) {
+      logger.error(`Creating a new issue record failed, error: ${JSON.stringify(_error)}`);
+      throw new Error(`Creating a new issue record failed, error: ${JSON.stringify(_error)}`);
+    }
+    logger.info(`Creating a new issue record done, { data: ${_data}, error: ${_error}`);
   }
 };
 
@@ -135,18 +168,26 @@ export const upsertIssue = async (issue: Issue, additions: IssueAdditions): Prom
 export const upsertUser = async (user: UserProfile): Promise<void> => {
   const logger = getLogger();
   const { supabase } = getAdapters();
-  const { data, error } = await supabase.from("users").select("id").eq("user_login", user.login).single();
+  const { data, error } = await supabase.from("users").select("user_login").eq("user_login", user.login);
+  if (error) {
+    logger.error(`Checking user failed, error: ${JSON.stringify(error)}`);
+    throw new Error(`Checking user failed, error: ${JSON.stringify(error)}`);
+  }
 
-  if (data) {
-    const key = data.id as number;
-    await supabase
-      .from("users")
-      .upsert({ id: key, ...getDbDataFromUserProfile(user) })
-      .select();
-    logger.info(`Upserting an user done", { data: ${data}, error: ${error} }`);
-  } else if (error) {
+  if (data && data.length > 0) {
+    const { data: _data, error: _error } = await supabase.from("users").upsert(getDbDataFromUserProfile(user)).select();
+    if (_error) {
+      logger.error(`Upserting a user failed, error: ${JSON.stringify(_error)}`);
+      throw new Error(`Upserting a user failed, error: ${JSON.stringify(_error)}`);
+    }
+    logger.info(`Upserting a user done, { data: ${JSON.stringify(_data)} }`);
+  } else {
     const { data: _data, error: _error } = await supabase.from("users").insert(getDbDataFromUserProfile(user));
-    logger.info(`Creating a new user done", { data: ${_data}, error: ${_error} }`);
+    if (_error) {
+      logger.error(`Creating a new user record failed, error: ${JSON.stringify(_error)}`);
+      throw new Error(`Creating a new user record failed, error: ${JSON.stringify(_error)}`);
+    }
+    logger.info(`Creating a new user record done, { data: ${JSON.stringify(_data)} }`);
   }
 };
 
@@ -159,14 +200,23 @@ export const upsertWalletAddress = async (username: string, address: string): Pr
   const logger = getLogger();
   const { supabase } = getAdapters();
 
-  const { data, error } = await supabase.from("wallets").select("user_name").eq("user_name", username).single();
-  if (data) {
-    await supabase.from("wallets").upsert({
+  const { data, error } = await supabase.from("wallets").select("user_name").eq("user_name", username);
+  if (error) {
+    logger.error(`Checking wallet address failed, error: ${JSON.stringify(error)}`);
+    throw new Error(`Checking wallet address failed, error: ${JSON.stringify(error)}`);
+  }
+
+  if (data && data.length > 0) {
+    const { data: _data, error: _error } = await supabase.from("wallets").upsert({
       user_name: username,
       wallet_address: address,
       updated_at: new Date().toUTCString(),
     });
-    logger.info(`Upserting a wallet address done, { data: ${data}, error: ${error} }`);
+    if (_error) {
+      logger.error(`Upserting a wallet address failed, error: ${JSON.stringify(_error)}`);
+      throw new Error(`Upserting a wallet address failed, error: ${JSON.stringify(_error)}`);
+    }
+    logger.info(`Upserting a wallet address done, { data: ${JSON.stringify(_data)} }`);
   } else {
     const { data: _data, error: _error } = await supabase.from("wallets").insert({
       user_name: username,
@@ -174,7 +224,11 @@ export const upsertWalletAddress = async (username: string, address: string): Pr
       created_at: new Date().toUTCString(),
       updated_at: new Date().toUTCString(),
     });
-    logger.info(`Creating a new wallet_table record done, { data: ${_data}, error: ${_error} }`);
+    if (_error) {
+      logger.error(`Creating a new wallet_table record failed, error: ${JSON.stringify(_error)}`);
+      throw new Error(`Creating a new wallet_table record failed, error: ${JSON.stringify(_error)}`);
+    }
+    logger.info(`Creating a new wallet_table record done, { data: ${JSON.stringify(_data)} }`);
   }
 };
 
@@ -187,15 +241,24 @@ export const upsertWalletMultiplier = async (username: string, multiplier: strin
   const logger = getLogger();
   const { supabase } = getAdapters();
 
-  const { data, error } = await supabase.from("multiplier").select("user_id").eq("user_id", `${username}_${org_id}`).single();
-  if (data) {
-    await supabase.from("multiplier").upsert({
+  const { data, error } = await supabase.from("multiplier").select("user_id").eq("user_id", `${username}_${org_id}`);
+  if (error) {
+    logger.error(`Checking wallet multiplier failed, error: ${JSON.stringify(error)}`);
+    throw new Error(`Checking wallet multiplier failed, error: ${JSON.stringify(error)}`);
+  }
+
+  if (data && data.length > 0) {
+    const { data: _data, error: _error } = await supabase.from("multiplier").upsert({
       user_id: `${username}_${org_id}`,
       value: multiplier,
       reason,
       updated_at: new Date().toUTCString(),
     });
-    logger.info(`Upserting a wallet address done, { data: ${data}, error: ${error} }`);
+    if (_error) {
+      logger.error(`Upserting a wallet multiplier failed, error: ${JSON.stringify(_error)}`);
+      throw new Error(`Upserting a wallet multiplier failed, error: ${JSON.stringify(_error)}`);
+    }
+    logger.info(`Upserting a wallet multiplier done, { data: ${JSON.stringify(_data)} }`);
   } else {
     const { data: _data, error: _error } = await supabase.from("multiplier").insert({
       user_id: `${username}_${org_id}`,
@@ -204,7 +267,11 @@ export const upsertWalletMultiplier = async (username: string, multiplier: strin
       created_at: new Date().toUTCString(),
       updated_at: new Date().toUTCString(),
     });
-    logger.info(`Creating a new multiplier_table record done, { data: ${_data}, error: ${_error} }`);
+    if (_error) {
+      logger.error(`Creating a new multiplier record failed, error: ${JSON.stringify(_error)}`);
+      throw new Error(`Creating a new multiplier record failed, error: ${JSON.stringify(_error)}`);
+    }
+    logger.info(`Creating a new multiplier record done, { data: ${JSON.stringify(_data)} }`);
   }
 };
 
@@ -219,7 +286,11 @@ export const upsertAccessControl = async (username: string, repository: string, 
   const logger = getLogger();
   const { supabase } = getAdapters();
 
-  const { data, error } = await supabase.from("access").select("user_name").eq("user_name", username).eq("repository", repository).single();
+  const { data, error } = await supabase.from("access").select("user_name").eq("user_name", username).eq("repository", repository);
+  if (error) {
+    logger.error(`Checking access control failed, error: ${JSON.stringify(error)}`);
+    throw new Error(`Checking access control failed, error: ${JSON.stringify(error)}`);
+  }
 
   const properties = {
     user_name: username,
@@ -228,9 +299,13 @@ export const upsertAccessControl = async (username: string, repository: string, 
     [access]: bool,
   };
 
-  if (data) {
-    await supabase.from("access").upsert(properties);
-    logger.info(`Upserting an access done, { data: ${data}, error: ${error} }`);
+  if (data && data.length > 0) {
+    const { data: _data, error: _error } = await supabase.from("access").upsert(properties);
+    if (_error) {
+      logger.error(`Upserting a access control failed, error: ${JSON.stringify(_error)}`);
+      throw new Error(`Upserting a access control failed, error: ${JSON.stringify(_error)}`);
+    }
+    logger.info(`Upserting a access control done, { data: ${JSON.stringify(_data)} }`);
   } else {
     const { data: _data, error: _error } = await supabase.from("access").insert({
       created_at: new Date().toUTCString(),
@@ -240,7 +315,11 @@ export const upsertAccessControl = async (username: string, repository: string, 
       priority_access: false,
       ...properties,
     });
-    logger.info(`Creating a new access record done, { data: ${_data}, error: ${_error} }`);
+    if (_error) {
+      logger.error(`Creating a new access control record failed, error: ${JSON.stringify(_error)}`);
+      throw new Error(`Creating a new access control record failed, error: ${JSON.stringify(_error)}`);
+    }
+    logger.info(`Creating a new access control record done, { data: ${JSON.stringify(_data)} }`);
   }
 };
 
@@ -365,4 +444,59 @@ export const removePenalty = async (username: string, repoName: string, tokenAdd
   if (error) {
     throw new Error(`Error removing penalty: ${error.message}`);
   }
+};
+
+const getDbDataFromPermit = (permit: InsertPermit): Record<string, unknown> => {
+  return {
+    organization_id: permit.organizationId,
+    repository_id: permit.repositoryId,
+    issue_id: permit.issueId,
+    network_id: permit.networkId,
+    bounty_hunter_id: permit.bountyHunterId,
+    token_address: permit.tokenAddress,
+    payout_amount: permit.payoutAmount,
+    bounty_hunter_address: permit.bountyHunterAddress,
+    nonce: permit.nonce,
+    deadline: permit.deadline,
+    signature: permit.signature,
+    wallet_owner_address: permit.walletOwnerAddress,
+  };
+};
+
+const getPermitFromDbData = (data: Record<string, unknown>): Permit => {
+  return {
+    id: data.id,
+    createdAt: new Date(Date.parse(data.created_at as string)),
+    organizationId: data.organization_id,
+    repositoryId: data.repository_i,
+    issueId: data.issue_id,
+    networkId: data.network_id,
+    bountyHunterId: data.bounty_hunter_id,
+    tokenAddress: data.token_address,
+    payoutAmount: data.payout_amount,
+    bountyHunterAddress: data.bounty_hunter_address,
+    nonce: data.nonce,
+    deadline: data.deadline,
+    signature: data.signature,
+    walletOwnerAddress: data.wallet_owner_address,
+  } as Permit;
+};
+
+export const savePermit = async (permit: InsertPermit): Promise<Permit> => {
+  const { supabase } = getAdapters();
+  const { data, error } = await supabase
+    .from("permits")
+    .insert({
+      ...getDbDataFromPermit(permit),
+      created_at: new Date().toISOString(),
+      id: undefined, // id is auto-generated
+    })
+    .select();
+  if (error) {
+    throw new Error(error.message);
+  }
+  if (!data || data.length === 0) {
+    throw new Error("No data returned");
+  }
+  return getPermitFromDbData(data[0]);
 };
